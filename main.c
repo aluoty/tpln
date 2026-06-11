@@ -58,8 +58,8 @@ void draw_interface(void) {
     }
 
     // Render footer status tracking data blocks
-    mvhline(ROWS - 3, 1, ACS_HLINE, COLS - 2);
-    mvprintw(ROWS - 2, 2, "Total Tasks Tracked: %d | Active Focus Index ID: %d", task_count, current_selection);
+    mvhline(LINES - 3, 1, ACS_HLINE, COLS - 2);
+    mvprintw(LINES - 2, 2, "Total Tasks Tracked: %d | Active Focus Index ID: %d", task_count, current_selection);
     
     refresh();
 }
@@ -72,8 +72,8 @@ void append_new_task(void) {
     curs_set(1);
     
     char buffer[TASK_LEN] = {0};
-    mvprintw(ROWS - 2, 2, "Enter New Task: %-60s", " "); // Clear specific line space region
-    mvprintw(ROWS - 2, 2, "Enter New Task: ");
+    mvprintw(LINES - 2, 2, "Enter New Task: %-60s", " "); // Clear specific line space region
+    mvprintw(LINES - 2, 2, "Enter New Task: ");
     
     getnstr(buffer, TASK_LEN - 1);
     

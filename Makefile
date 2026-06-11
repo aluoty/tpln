@@ -1,11 +1,11 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -O2
-TARGET = planner
+TARGET = tpln
 
 all: $(TARGET)
 
-$(TARGET): planner.c
-	$(CC) $(CFLAGS) planner.c -o $(TARGET) -lncurses
+$(TARGET): main.c
+	$(CC) $(CFLAGS) main.c -o $(TARGET) -lncurses
 
 clean:
 	rm -f $(TARGET)
