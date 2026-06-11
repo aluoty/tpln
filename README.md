@@ -9,7 +9,7 @@ Clean by:
 ```bash
 make clean
 ```
-## Features
+## Controls
 + j and k key to move through tasks
 + e for drag and drop in manual order mode
 + s to cycle sort types
