@@ -1,11 +1,12 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -O2
-TARGET = tpln
+TARGET = build/tpln
 
 all: $(TARGET)
 
-$(TARGET): main.c
-	$(CC) $(CFLAGS) main.c -o $(TARGET) -lncurses
+$(TARGET): src/main.c
+	mkdir -p build
+	$(CC) $(CFLAGS) src/main.c -o $(TARGET) -lncurses
 
 clean:
 	rm -f $(TARGET)
