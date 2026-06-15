@@ -3,7 +3,7 @@ This is tpln, a lightweight TUI planner built using ncurses and C.
 Run by:
 ```bash
 make
-./tpln
+./build/tpln
 ```
 Clean by:
 ```bash
