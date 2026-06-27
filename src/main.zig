@@ -25,6 +25,8 @@ var tasks: [MAX_TASKS]Task = undefined;
 var task_count: usize = 0;
 var current_selection: usize = 0;
 var is_holding: bool = false;
+var is_editing: bool = false;
+var editing_index: usize = 0;
 var sort_mode: SortMode = .manual;
 
 const FormField = enum { desc, tag, due_date, priority };
@@ -37,6 +39,7 @@ var form_date_input: TextInput = undefined;
 var form_pri_input: TextInput = undefined;
 var task_lines: [MAX_TASKS][128]u8 = undefined;
 var sort_mode_buf: [64]u8 = undefined;
+var header_buf: [64]u8 = undefined;
 var footer_buf: [128]u8 = undefined;
 
 fn initTasks() void {
@@ -119,8 +122,8 @@ fn deleteTask() void {
     }
 }
 
-fn addTaskFromForm() void {
-    if (task_count >= MAX_TASKS) return;
+fn submitForm() void {
+    if (!is_editing and task_count >= MAX_TASKS) return;
 
     const alloc_a = form_desc_input.buf.allocator;
 
@@ -137,38 +140,45 @@ fn addTaskFromForm() void {
     defer alloc_a.free(pri_text);
 
     if (desc_text.len > 0) {
+        const target = if (is_editing) editing_index else task_count;
+
         const n = @min(desc_text.len, TASK_LEN - 1);
-        @memcpy(tasks[task_count].desc[0..n], desc_text[0..n]);
-        tasks[task_count].desc[n] = 0;
+        @memcpy(tasks[target].desc[0..n], desc_text[0..n]);
+        tasks[target].desc[n] = 0;
 
         if (tag_text.len > 0) {
             const tl = @min(tag_text.len, 15);
-            @memcpy(tasks[task_count].tag[0..tl], tag_text[0..tl]);
-            tasks[task_count].tag[tl] = 0;
+            @memcpy(tasks[target].tag[0..tl], tag_text[0..tl]);
+            tasks[target].tag[tl] = 0;
         } else {
-            @memcpy(tasks[task_count].tag[0..4], "NONE");
-            tasks[task_count].tag[4] = 0;
+            @memcpy(tasks[target].tag[0..4], "NONE");
+            tasks[target].tag[4] = 0;
         }
 
         if (date_text.len > 0) {
             const dl = @min(date_text.len, 10);
-            @memcpy(tasks[task_count].due_date[0..dl], date_text[0..dl]);
-            tasks[task_count].due_date[dl] = 0;
+            @memcpy(tasks[target].due_date[0..dl], date_text[0..dl]);
+            tasks[target].due_date[dl] = 0;
         } else {
-            @memcpy(tasks[task_count].due_date[0..10], "9999-12-31");
-            tasks[task_count].due_date[10] = 0;
+            @memcpy(tasks[target].due_date[0..10], "9999-12-31");
+            tasks[target].due_date[10] = 0;
         }
 
         var p: u8 = 3;
         if (pri_text.len > 0) {
             p = std.fmt.parseInt(u8, pri_text, 10) catch 3;
-            if (p < 1 or p > 3) p = 3;
+            if (p < 1 or p > 5) p = 3;
         }
-        tasks[task_count].priority = p;
-        tasks[task_count].done = false;
+        tasks[target].priority = p;
+        tasks[target].done = false;
 
-        task_count += 1;
-        triggerSort();
+        if (!is_editing) {
+            task_count += 1;
+            triggerSort();
+        }
+
+        is_editing = false;
+        resetForm();
     }
 }
 
@@ -179,6 +189,7 @@ fn resetForm() void {
     form_pri_input.clearRetainingCapacity();
     form_field = .desc;
     form_active = false;
+    is_editing = false;
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -220,8 +231,7 @@ pub fn main(init: std.process.Init) !void {
                             .tag => form_field = .due_date,
                             .due_date => form_field = .priority,
                             .priority => {
-                                addTaskFromForm();
-                                resetForm();
+                                submitForm();
                             },
                         }
                     } else if (key.matches(vaxis.Key.tab, .{}) or key.matches(vaxis.Key.down, .{})) {
@@ -274,9 +284,29 @@ pub fn main(init: std.process.Init) !void {
                         if (task_count > 0) {
                             tasks[current_selection].done = !tasks[current_selection].done;
                         }
-                    } else if (key.matches('e', .{})) {
+                    } else if (key.matches('g', .{})) {
                         if (task_count > 0 and sort_mode == .manual) {
                             is_holding = !is_holding;
+                        }
+                    } else if (key.matches('e', .{})) {
+                        if (task_count > 0) {
+                            const t = &tasks[current_selection];
+                            form_desc_input.clearRetainingCapacity();
+                            form_tag_input.clearRetainingCapacity();
+                            form_date_input.clearRetainingCapacity();
+                            form_pri_input.clearRetainingCapacity();
+                            form_desc_input.insertSliceAtCursor(std.mem.sliceTo(&t.desc, 0)) catch {};
+                            form_tag_input.insertSliceAtCursor(std.mem.sliceTo(&t.tag, 0)) catch {};
+                            form_date_input.insertSliceAtCursor(std.mem.sliceTo(&t.due_date, 0)) catch {};
+                            {
+                                var pb: [4]u8 = undefined;
+                                const ps = std.fmt.bufPrint(&pb, "{d}", .{t.priority}) catch "3";
+                                form_pri_input.insertSliceAtCursor(ps) catch {};
+                            }
+                            editing_index = current_selection;
+                            is_editing = true;
+                            form_active = true;
+                            form_field = .desc;
                         }
                     } else if (key.matches('d', .{})) {
                         deleteTask();
@@ -316,53 +346,55 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn drawMain(win: vaxis.Window) void {
-    const header_style: vaxis.Style = .{ .fg = .{ .index = 6 } };
-    const done_style: vaxis.Style = .{ .fg = .{ .index = 2 } };
+    const title_style: vaxis.Style = .{ .bold = true, .fg = .{ .index = 6 } };
+    const dim_style: vaxis.Style = .{ .dim = true };
     const highlight_style: vaxis.Style = .{ .reverse = true };
     const grab_style: vaxis.Style = .{ .reverse = true, .fg = .{ .index = 3 } };
+    const done_style: vaxis.Style = .{ .fg = .{ .index = 2 } };
+    const header_style: vaxis.Style = .{ .ul_style = .single };
     const normal_style: vaxis.Style = .{};
 
-    // Title
-    _ = win.print(&.{vaxis.Segment{
-        .text = " === tpln - ADVANCED WORKFLOW CORE === ",
-        .style = .{ .bold = true, .fg = .{ .index = 6 } },
-    }}, .{ .row_offset = 0, .col_offset = 2 });
+    // Row 0: Title + status
+    const status_text = std.fmt.bufPrint(&sort_mode_buf, "Sort: {s}    Tasks: {d}/50", .{
+        @tagName(sort_mode),
+        task_count,
+    }) catch "Sort: manual";
+    _ = win.print(&.{
+        vaxis.Segment{ .text = " === tpln ===  Advanced Workflow Core ", .style = title_style },
+        vaxis.Segment{ .text = status_text, .style = dim_style },
+    }, .{ .row_offset = 0, .col_offset = 2 });
 
-    // Controls help
+    // Row 1: Compact help
     _ = win.print(&.{vaxis.Segment{
-        .text = "j/k: Move | SPACE: Toggle | e: Grab/Drop | d: Del | a: Add | s: Sort | q: Quit",
-        .style = normal_style,
+        .text = "j/k:Move  SPACE:Toggle  g:Grab  e:Edit  d:Del  a:Add  s:Sort  q:Quit",
+        .style = dim_style,
     }}, .{ .row_offset = 1, .col_offset = 2 });
 
-    // Sort mode
-    const sort_text = std.fmt.bufPrint(&sort_mode_buf, "Current Sort Mode: {s}", .{
-        @tagName(sort_mode),
-    }) catch "Sort Mode: ?";
-    _ = win.print(&.{vaxis.Segment{
-        .text = sort_text,
-        .style = header_style,
-    }}, .{ .row_offset = 2, .col_offset = 2 });
-
-    // Separator
-    const sep_row: u16 = 3;
+    // Row 2: Separator
     for (0..win.width) |c| {
-        win.writeCell(@intCast(c), sep_row, .{
+        win.writeCell(@intCast(c), 2, .{
             .char = .{ .grapheme = "─", .width = 1 },
             .style = .{},
         });
     }
 
-    // Table header
-    const hdr_row: u16 = 4;
+    // Row 3: Column headers
+    const hdr = std.fmt.bufPrint(&header_buf, "      {s:<28} {s:<10} {s:<12} {s:<4}", .{
+        "Task Description",
+        "Tag",
+        "Due Date",
+        "Pri",
+    }) catch "Task Description              Tag         Due Date     Pri";
     _ = win.print(&.{vaxis.Segment{
-        .text = "Task Description                  Tag         Due Date     Priority",
-        .style = .{ .ul_style = .single },
-    }}, .{ .row_offset = hdr_row, .col_offset = 2 });
+        .text = hdr,
+        .style = header_style,
+    }}, .{ .row_offset = 3, .col_offset = 2 });
 
     // Task rows
-    var row: u16 = 5;
+    var row: u16 = 4;
     var i: usize = 0;
-    while (i < task_count and row < win.height) : (i += 1) {
+    const task_end = win.height -| 3;
+    while (i < task_count and row < task_end) : (i += 1) {
         const is_selected = i == current_selection;
 
         var marker: u8 = ' ';
@@ -375,7 +407,7 @@ fn drawMain(win: vaxis.Window) void {
 
         const done_char: u8 = if (tasks[i].done) 'X' else ' ';
 
-        const line = std.fmt.bufPrint(&task_lines[i], "{c} [{c}] {s:<28} {s:<10} {s:<12} {s:<8}", .{
+        const line = std.fmt.bufPrint(&task_lines[i], "{c} [{c}] {s:<28} {s:<10} {s:<12} {s:<4}", .{
             marker,
             done_char,
             std.mem.sliceTo(&tasks[i].desc, 0),
@@ -397,9 +429,17 @@ fn drawMain(win: vaxis.Window) void {
         row += 1;
     }
 
-    // Footer separator
+    // Empty state
+    if (task_count == 0) {
+        _ = win.print(&.{vaxis.Segment{
+            .text = "(no tasks yet — press 'a' to add one)",
+            .style = dim_style,
+        }}, .{ .row_offset = row, .col_offset = 2 });
+    }
+
+    // Footer
     if (row < win.height) {
-        const footer_sep = win.height -| 2;
+        const footer_sep = win.height -| 3;
         for (0..win.width) |c| {
             win.writeCell(@intCast(c), footer_sep, .{
                 .char = .{ .grapheme = "─", .width = 1 },
@@ -407,21 +447,32 @@ fn drawMain(win: vaxis.Window) void {
             });
         }
 
-        const mode_str = if (is_holding) "HOLDING/GRABBED" else "NAV";
-        const footer = std.fmt.bufPrint(&footer_buf,
-            "Count: {d} | Selection ID: {d} | Action Mode: {s}",
-            .{ task_count, current_selection, mode_str },
+        var done_count: u32 = 0;
+        for (0..task_count) |ti| {
+            if (tasks[ti].done) done_count += 1;
+        }
+        const pending_count = task_count - done_count;
+        const pct: u8 = if (task_count > 0) @intCast(@as(u64, done_count) * 100 / task_count) else 0;
+        const mode_str = if (is_holding) "HOLD/GRAB" else "NAV";
+        const summary = std.fmt.bufPrint(&footer_buf,
+            "{d} tasks  |  {d} done ({d}%)  |  {d} pending  |  Sel: #{d}  |  Mode: {s}",
+            .{ task_count, done_count, pct, pending_count, current_selection, mode_str },
         ) catch "Count: ?";
         _ = win.print(&.{vaxis.Segment{
-            .text = footer,
+            .text = summary,
             .style = normal_style,
         }}, .{ .row_offset = footer_sep + 1, .col_offset = 2 });
+
+        _ = win.print(&.{vaxis.Segment{
+            .text = "j/k:Move  SPACE:Toggle  g:Grab/Drop  e:Edit  d:Del  a:Add  s:Sort  q:Quit",
+            .style = dim_style,
+        }}, .{ .row_offset = footer_sep + 2, .col_offset = 2 });
     }
 }
 
 fn drawForm(win: vaxis.Window) void {
-    const form_width: u16 = 50;
-    const form_height: u16 = 10;
+    const form_width: u16 = 52;
+    const form_height: u16 = 12;
     const form_x = win.width / 2 - form_width / 2;
     const form_y = win.height / 2 - form_height / 2;
 
@@ -436,27 +487,37 @@ fn drawForm(win: vaxis.Window) void {
         },
     });
 
+    // Title bar inside form
+    const form_title = if (is_editing) " Edit Task " else " New Task ";
     _ = form_win.print(&.{vaxis.Segment{
-        .text = " Add Task ",
+        .text = form_title,
         .style = .{ .bold = true, .fg = .{ .index = 6 } },
     }}, .{ .row_offset = 0, .col_offset = 2 });
+
+    // Separator line below title
+    for (0..form_width) |c| {
+        form_win.writeCell(@intCast(c), 1, .{
+            .char = .{ .grapheme = "─", .width = 1 },
+            .style = .{ .fg = .{ .index = 6 } },
+        });
+    }
 
     const fields = [_]struct {
         label: []const u8,
         input: *TextInput,
     }{
         .{ .label = "Description", .input = &form_desc_input },
-        .{ .label = "Tag (e.g. DEV)", .input = &form_tag_input },
-        .{ .label = "Due Date (YYYY-MM-DD)", .input = &form_date_input },
-        .{ .label = "Priority (1=High, 2=Med, 3=Low)", .input = &form_pri_input },
+        .{ .label = "Tag", .input = &form_tag_input },
+        .{ .label = "Due Date", .input = &form_date_input },
+        .{ .label = "Priority", .input = &form_pri_input },
     };
 
-    const label_col: u16 = 1;
-    const input_col: u16 = 24;
-    const input_width = form_width - input_col - 2;
+    const label_col: u16 = 2;
+    const input_col: u16 = 16;
+    const input_width = form_width - input_col - 3;
 
     inline for (fields, 0..) |f, idx| {
-        const frow: u16 = @intCast(idx + 2);
+        const frow: u16 = @intCast(idx + 3);
         const current_field: FormField = @enumFromInt(idx);
         const is_active = form_field == current_field;
 
@@ -484,10 +545,11 @@ fn drawForm(win: vaxis.Window) void {
         }
     }
 
-    // Help text at bottom
+    // Help bar at bottom
     const help_row = form_height - 2;
     _ = form_win.print(&.{vaxis.Segment{
-        .text = "Tab/Arrows: Next Field  Enter: Submit  Esc: Cancel",
+        .text = "Tab/Arrows: Next  Enter: Submit  Esc: Cancel",
         .style = .{ .dim = true },
-    }}, .{ .row_offset = help_row, .col_offset = 1 });
+    }}, .{ .row_offset = help_row, .col_offset = 2 });
 }
+
